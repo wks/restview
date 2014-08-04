@@ -119,6 +119,10 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         elif self.path.endswith('.txt') or self.path.endswith('.rst'):
             return self.handle_rest_file(self.translate_path())
         else:
+            trpath = self.translate_path()
+            rstpath = trpath + ".rst"
+            if os.path.isfile(rstpath):
+                return self.handle_rest_file(rstpath)
             self.send_error(501, "File type not supported: %s" % self.path)
 
     def handle_polling(self, path, old_mtime):

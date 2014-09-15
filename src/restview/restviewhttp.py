@@ -68,6 +68,12 @@ except NameError:
 __version__ = "2.0.6.dev0"
 
 
+RST_EXTS = [".rst", ".rest"]
+
+def has_rst_ext(fn):
+    return any(fn.endswith(ext) for ext in RST_EXTS)
+
+
 class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     """HTTP request handler that renders ReStructuredText on the fly."""
 
@@ -116,13 +122,14 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             return self.handle_image(self.translate_path(), 'image/png')
         elif self.path.endswith('.jpg') or self.path.endswith('.jpeg'):
             return self.handle_image(self.translate_path(), 'image/jpeg')
-        elif self.path.endswith('.txt') or self.path.endswith('.rst'):
+        elif self.path.endswith('.txt') or has_rst_ext(self.path):
             return self.handle_rest_file(self.translate_path())
         else:
             trpath = self.translate_path()
-            rstpath = trpath + ".rst"
-            if os.path.isfile(rstpath):
-                return self.handle_rest_file(rstpath)
+            for ext in [".rst", ".rest"]:
+                rstpath = trpath + ext
+                if os.path.isfile(rstpath):
+                    return self.handle_rest_file(rstpath)
             self.send_error(501, "File type not supported: %s" % self.path)
 
     def handle_polling(self, path, old_mtime):
@@ -233,7 +240,7 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
                            if not dn.startswith('.')
                            and not dn.endswith('.egg-info')]
             for fn in filenames:
-                if fn.endswith('.txt') or fn.endswith('.rst'):
+                if fn.endswith('.txt') or has_rst_ext(fn):
                     prefix = dirpath[len(dirname):]
                     files.append(os.path.join(prefix, fn))
         files.sort(key=str.lower)

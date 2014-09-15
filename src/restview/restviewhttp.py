@@ -126,7 +126,7 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             return self.handle_rest_file(self.translate_path())
         else:
             trpath = self.translate_path()
-            for ext in [".rst", ".rest"]:
+            for ext in RST_EXTS:
                 rstpath = trpath + ext
                 if os.path.isfile(rstpath):
                     return self.handle_rest_file(rstpath)

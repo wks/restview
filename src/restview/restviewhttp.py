@@ -7,7 +7,7 @@ Usage:
 or
     restview [options] directory [...]
 or
-    restview [options] -e "command"
+    restview [options] -e "command" [--watch filename] [...]
 or
     restview [options] --long-description
 or
@@ -55,6 +55,7 @@ except ImportError:
 
 import docutils.core
 import docutils.writers.html4css1
+import readme.rst
 import pygments
 from pygments import lexers, formatters
 
@@ -65,7 +66,12 @@ except NameError:
     unicode = str
 
 
-__version__ = "2.0.6.dev0"
+__version__ = "2.4.1.dev0"
+
+
+# If restview is ever packaged for Debian, this'll likely be changed to
+# point to /usr/share/restview
+DATA_PATH = os.path.dirname(os.path.realpath(__file__))
 
 
 RST_EXTS = [".rst", ".rest"]
@@ -94,25 +100,30 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             return
         root = self.server.renderer.root
         command = self.server.renderer.command
+        watch = self.server.renderer.watch
         if self.path == '/':
             if command:
-                return self.handle_command(command)
+                return self.handle_command(command, watch)
             elif isinstance(root, str):
                 if os.path.isdir(root):
                     return self.handle_dir(root)
                 else:
-                    return self.handle_rest_file(root)
+                    return self.handle_rest_file(root, watch)
             else:
                 return self.handle_list(root)
         elif self.path.startswith('/polling?'):
             query = parse_qs(self.path.partition('?')[-1])
             pathname = query['pathname'][0]
-            if pathname == '/' and isinstance(root, str):
-                pathname = root
+            if pathname == '/' and command:
+                pathnames = []
+            elif pathname == '/' and isinstance(root, str):
+                pathnames = [root]
             else:
-                pathname = self.translate_path(pathname)
-            old_mtime = int(query['mtime'][0])
-            return self.handle_polling(pathname, old_mtime)
+                pathnames = [self.translate_path(pathname)]
+            if watch:
+                pathnames += watch
+            old_mtime = query['mtime'][0]
+            return self.handle_polling(pathnames, old_mtime)
         elif self.path == '/favicon.ico':
             return self.handle_image(self.server.renderer.favicon_path,
                                      'image/x-icon')
@@ -123,7 +134,7 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         elif self.path.endswith('.jpg') or self.path.endswith('.jpeg'):
             return self.handle_image(self.translate_path(), 'image/jpeg')
         elif self.path.endswith('.txt') or has_rst_ext(self.path):
-            return self.handle_rest_file(self.translate_path())
+            return self.handle_rest_file(self.translate_path(), watch)
         else:
             trpath = self.translate_path()
             for ext in RST_EXTS:
@@ -132,21 +143,29 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
                     return self.handle_rest_file(rstpath)
             self.send_error(501, "File type not supported: %s" % self.path)
 
-    def handle_polling(self, path, old_mtime):
+    def get_latest_mtime(self, filenames, latest_mtime=None):
+        for path in filenames:
+            try:
+                mtime = os.stat(path).st_mtime
+            except OSError:
+                pass
+            else:
+                if latest_mtime is None or mtime > latest_mtime:
+                    latest_mtime = mtime
+        return latest_mtime
+
+    def handle_polling(self, paths, old_mtime):
         # TODO: use inotify if available
         while True:
-            try:
-                mtime = int(os.stat(path).st_mtime)
-            except OSError:
+            mtime = self.get_latest_mtime(paths)
+            if mtime is None:
                 # Sometimes when you save a file in a text editor it stops
                 # existing for a brief moment.
                 # See https://github.com/mgedmin/restview/issues/11
                 time.sleep(0.1)
                 continue
-            # we lose precision by using int(), but I'm nervous of
-            # round-tripping floating point numbers through HTML and
-            # comparing them for equality
-            if mtime != old_mtime:
+            # Compare as strings: the JS treats our value as a cookie
+            if str(mtime) != str(old_mtime):
                 try:
                     self.send_response(200)
                     self.send_header("Cache-Control", "no-cache, no-store, max-age=0")
@@ -182,52 +201,61 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             self.end_headers()
             return data
 
-    def handle_rest_file(self, filename):
+    def handle_rest_file(self, filename, watch=None):
         try:
             with open(filename, 'rb') as f:
                 mtime = os.fstat(f.fileno()).st_mtime
-                return self.handle_rest_data(f.read(), mtime=mtime)
+                if watch:
+                    mtime = self.get_latest_mtime(watch, mtime)
+                return self.handle_rest_data(f.read(), mtime=mtime, filename=filename)
         except IOError as e:
             self.log_error("%s", e)
             self.send_error(404, "File not found: %s" % self.path)
 
-    def handle_command(self, command):
+    def handle_command(self, command, watch=None):
         try:
+            mtime = self.get_latest_mtime(watch) if watch else None
             p = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE)
             stdout, stderr = p.communicate()
             if p.returncode != 0:
                 self.log_error("'%s' terminated with %s", command, p.returncode)
             if stderr or not stdout:
-                return self.handle_error(command, p.returncode, stderr)
+                return self.handle_error(command, p.returncode, stderr, mtime=mtime)
             else:
-                return self.handle_rest_data(stdout)
+                return self.handle_rest_data(stdout, mtime=mtime)
         except OSError as e:
             self.log_error("%s", e)
             self.send_error(500, "Command execution failed")
 
-    def handle_rest_data(self, data, mtime=None):
-        html = self.server.renderer.rest_to_html(data, mtime=mtime)
+    def handle_rest_data(self, data, mtime=None, filename=None):
+        html = self.server.renderer.rest_to_html(data, mtime=mtime,
+                                                 filename=filename)
         if isinstance(html, unicode):
             html = html.encode('UTF-8')
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=UTF-8")
         self.send_header("Content-Length", str(len(html)))
         self.send_header("Cache-Control", "no-cache, no-store, max-age=0")
+        if mtime is not None:
+            self.send_header("X-Restview-Mtime", str(mtime))
         self.end_headers()
         return html
 
-    def handle_error(self, command, retcode, stderr):
+    def handle_error(self, command, retcode, stderr, mtime=None):
         html = self.server.renderer.render_exception(
             title=command,
-            error='Returned error code %s' % retcode,
-            source=stderr or '(no output)')
+            error='Process returned error code %s.' % retcode,
+            source=stderr or '(no output)',
+            mtime=mtime)
         if isinstance(html, unicode):
             html = html.encode('UTF-8')
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=UTF-8")
         self.send_header("Content-Length", str(len(html)))
         self.send_header("Cache-Control", "no-cache, no-store, max-age=0")
+        if mtime is not None:
+            self.send_header("X-Restview-Mtime", str(mtime))
         self.end_headers()
         return html
 
@@ -304,25 +332,48 @@ FILE_TEMPLATE = """\
 
 AJAX_STR = """
 <script type="text/javascript">
-var xmlHttp = null;
+var mtime = '%s';
+var poll = null;
 window.onload = function () {
     setTimeout(function () {
-        if (window.XMLHttpRequest) {
-            xmlHttp = new XMLHttpRequest();
-        } else if (window.ActiveXObject) {
-            xmlHttp = new ActiveXObject('Microsoft.XMLHTTP');
-        }
-        xmlHttp.onreadystatechange = function () {
-            if (xmlHttp.readyState == 4 && xmlHttp.status == '200') {
-                window.location.reload(true);
+        poll = new XMLHttpRequest();
+        poll.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
+                var reload = new XMLHttpRequest();
+                reload.onreadystatechange = function () {
+                    if (this.readyState == 4 && this.status == 200) {
+                        document.title = this.responseXML.title;
+                        document.body.innerHTML = this.responseXML.body.innerHTML;
+                        var old_styles = document.getElementsByTagName('style');
+                        var new_styles = this.responseXML.getElementsByTagName('style');
+                        for (var i = old_styles.length - 1; i >= 0; i--) {
+                            old_styles[i].remove();
+                        }
+                        // convert HTMLCollection to an array so that
+                        // items don't disappear from under us when I append
+                        // them to a different DOM tree
+                        new_styles = [].slice.call(new_styles);
+                        for (var i = 0; i < new_styles.length; i++) {
+                            document.head.appendChild(new_styles[i]);
+                        }
+                        mtime = this.getResponseHeader('X-Restview-Mtime');
+                        if (mtime) {
+                            poll.open('HEAD', '/polling?pathname=' + location.pathname + '&mtime=' + mtime, true);
+                            poll.send();
+                        }
+                    }
+                }
+                reload.open('GET', location.pathname, true);
+                reload.responseType = 'document';
+                reload.send();
             }
         }
-        xmlHttp.open('HEAD', '/polling?pathname=' + location.pathname + '&mtime=%d', true);
-        xmlHttp.send(null);
+        poll.open('HEAD', '/polling?pathname=' + location.pathname + '&mtime=' + mtime, true);
+        poll.send(null);
     }, 0);
 }
 window.onbeforeunload = function () {
-    xmlHttp.abort();
+    poll.abort();
 }
 </script>
 """
@@ -334,12 +385,12 @@ ERROR_TEMPLATE = """\
 <title>$title</title>
 <style type="text/css">
 pre.error {
-    border-left: 3px double red;
-    margin-left: 19px;
-    padding-left: 19px;
-    padding-top: 10px;
-    padding-bottom: 10px;
+    border-left: 1ex solid red;
+    padding-left: 1.5em;
+    padding-top: 1em;
+    padding-bottom: 1em;
     color: red;
+    background: #fff8f8;
 }
 </style>
 </head>
@@ -368,19 +419,21 @@ class RestViewer(object):
 
     local_address = ('localhost', 0)
 
-    # only set one of these two:
-    css_url = None
-    css_path = os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                            'default.css')
+    # Comma-separated list of URLs, full filenames, or filenames in the
+    # default search path (if you want to refer to docutils default
+    # stylesheets html4css1.css or math.css, or restview's default
+    # stylesheets restview.css and oldrestview.css).
+    stylesheets = 'html4css1.css,restview.css'
 
-    favicon_path = os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                                'favicon.ico')
+    favicon_path = os.path.join(DATA_PATH, 'favicon.ico')
 
     strict = False
+    pypi_strict = False
 
-    def __init__(self, root, command=None):
+    def __init__(self, root, command=None, watch=None):
         self.root = root
         self.command = command
+        self.watch = watch
 
     def listen(self):
         """Start listening on a TCP port.
@@ -401,22 +454,24 @@ class RestViewer(object):
     def close(self):
         self.server.server_close()
 
-    def rest_to_html(self, rest_input, settings=None, mtime=None):
+    def rest_to_html(self, rest_input, settings=None, mtime=None, filename=None):
         """Render ReStructuredText."""
         writer = docutils.writers.html4css1.Writer()
         if pygments is not None:
             writer.translator_class = SyntaxHighlightingHTMLTranslator
-        if self.css_url:
-            settings_overrides = {'stylesheet': self.css_url,
+        if self.stylesheets:
+            stylesheet_dirs = writer.default_stylesheet_dirs + [DATA_PATH]
+            # docutils can't embed http:// or https:// URLs
+            embed_stylesheet = '//' not in self.stylesheets
+            settings_overrides = {'stylesheet': self.stylesheets,
                                   'stylesheet_path': None,
-                                  'embed_stylesheet': False}
-        elif self.css_path:
-            settings_overrides = {'stylesheet': self.css_path,
-                                  'stylesheet_path': None,
-                                  'embed_stylesheet': True}
+                                  'stylesheet_dirs': stylesheet_dirs,
+                                  'embed_stylesheet': embed_stylesheet}
         else:
             settings_overrides = {}
         settings_overrides['syntax_highlight'] = 'short'
+        if self.pypi_strict:
+            settings_overrides.update(readme.rst.SETTINGS)
         if self.strict:
             settings_overrides['halt_level'] = 1
 
@@ -425,17 +480,26 @@ class RestViewer(object):
 
         try:
             docutils.core.publish_string(rest_input, writer=writer,
+                                         source_path=filename,
                                          settings_overrides=settings_overrides)
         except Exception as e:
-            html = self.render_exception(e.__class__.__name__, str(e), rest_input)
+            html = self.render_exception(e.__class__.__name__, str(e), rest_input, mtime=mtime)
         else:
+            if self.pypi_strict:
+                writer.body = [readme.rst.clean(''.join(writer.body))]
+                writer.output = writer.apply_template()
             html = writer.output
         return self.inject_ajax(html, mtime=mtime)
 
-    def render_exception(self, title, error, source):
-        return (ERROR_TEMPLATE.replace('$title', escape(title))
+    def render_exception(self, title, error, source, mtime=None):
+        # NB: source is a bytestring (see issue #16 for the reason)
+        # UTF-8 is not necessarily the right thing to use here, but
+        # garbage is better than a crash, right?
+        source = source.decode('UTF-8', 'replace')
+        html = (ERROR_TEMPLATE.replace('$title', escape(title))
                               .replace('$error', escape(error))
                               .replace('$source', escape(source)))
+        return self.inject_ajax(html, mtime=mtime)
 
     def inject_ajax(self, markup, mtime=None):
         if mtime is not None:
@@ -444,8 +508,7 @@ class RestViewer(object):
             return markup
 
 
-class SyntaxHighlightingHTMLTranslator(docutils.writers.html4css1.HTMLTranslator):
-
+class SyntaxHighlightingHTMLTranslator(readme.rst.ReadMeHTMLTranslator):
     in_doctest = False
     in_text = False
     in_reference = False
@@ -596,17 +659,32 @@ def main():
     parser.add_option('-e', '--execute', metavar='COMMAND',
                       help='run a command to produce ReStructuredText',
                       default=None)
+    parser.add_option('-w', '--watch', metavar='FILENAME', action='append',
+                      help='reload the page when a file changes (use with'
+                           ' --execute); can be specified multiple times',
+                      default=[])
     parser.add_option('--long-description',
-                      help='run "python setup.py --long-description" to produce ReStructuredText',
-                      action='store_const', dest='execute',
-                      const='python setup.py --long-description')
-    parser.add_option('--css', metavar='URL-or-FILENAME',
-                      help='use the specified stylesheet',
-                      action='store', dest='css_path', default=None)
+                      help='run "python setup.py --long-description" to produce'
+                           ' ReStructuredText; also enables --pypi-strict'
+                           ' and watches the usual long description sources'
+                           ' (setup.py, README.rst, CHANGES.rst)',
+                      action='store_true')
+    parser.add_option('--css', metavar='URL|FILENAME',
+                      help='use the specified stylesheet; can be specified'
+                           ' multiple times [default: %s]'
+                           % RestViewer.stylesheets,
+                      action='append', dest='stylesheets', default=[])
     parser.add_option('--strict',
                       help='halt at the slightest problem',
                       action='store_true', default=False)
+    parser.add_option('--pypi-strict',
+                      help='enable additional restrictions that PyPI performs',
+                      action='store_true', default=False)
     opts, args = parser.parse_args(sys.argv[1:])
+    if opts.long_description:
+        opts.execute = 'python setup.py --long-description'
+        opts.watch += ['setup.py', 'README.rst', 'CHANGES.rst']
+        opts.pypi_strict = True
     if not args and not opts.execute:
         parser.error("at least one argument expected")
     if args and opts.execute:
@@ -614,21 +692,15 @@ def main():
     if opts.browser is None:
         opts.browser = opts.listen is None
     if opts.execute:
-        server = RestViewer('.', command=opts.execute)
+        server = RestViewer('.', command=opts.execute, watch=opts.watch)
     elif len(args) == 1:
-        server = RestViewer(args[0])
+        server = RestViewer(args[0], watch=opts.watch)
     else:
-        server = RestViewer(args)
-    if opts.css_path:
-        if (opts.css_path.startswith('http://') or
-            opts.css_path.startswith('https://')):
-            server.css_url = opts.css_path
-            server.css_path = None
-        else:
-            server.css_path = opts.css_path
-            server.css_url = None
-
+        server = RestViewer(args, watch=opts.watch)
+    if opts.stylesheets:
+        server.stylesheets = ','.join(opts.stylesheets)
     server.strict = opts.strict
+    server.pypi_strict = opts.pypi_strict
 
     if opts.listen:
         try:

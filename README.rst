@@ -18,11 +18,8 @@ look for files that end in .txt or .rst and present you with a list.
 Finally, you can make sure your Python package has valid ReStructuredText
 in the long_description field by using ::
 
-  restview -e 'python setup.py --long-description' --strict
+  restview --long-description
 
-This is so useful restview has a shortcut for it ::
-
-  restview --long-description --strict
 
 Synopsis
 ========
@@ -37,15 +34,36 @@ Usage: ``restview [options] filename-or-directory [...]``
                       specified]
 -e COMMAND, --execute=COMMAND
                       run a command to produce ReStructuredText
+-w FILENAME, --watch=FILENAME
+                      reload the page when a file changes (use with
+                      --execute); can be specified multiple times
 --long-description    run "python setup.py --long-description" to produce
-                      ReStructuredText
+                      ReStructuredText; also enables --pypi-strict and watches
+                      the usual long description sources (setup.py, README.rst,
+                      CHANGES.rst)
 --css=URL-or-FILENAME
-                      use the specified stylesheet
+                      use the specified stylesheet; can be specified multiple
+                      times [default: html4css1.css,restview.css]
 --strict              halt at the slightest problem
+--pypi-strict         enable additional restrictions that PyPI performs
+
+Installation
+============
+
+On .deb based systems (e.g. Ubuntu) ::
+
+  sudo apt-get install python-pip
+  sudo pip install restview
+
+On .rpm based systems (e.g. Fedora) ::
+
+  su
+  yum install python-pip
+  pip install restview
 
 
-.. |buildstatus| image:: https://api.travis-ci.org/mgedmin/restview.png?branch=master
+.. |buildstatus| image:: https://api.travis-ci.org/mgedmin/restview.svg?branch=master
 .. _buildstatus: https://travis-ci.org/mgedmin/restview
 
-.. |coverage| image:: https://coveralls.io/repos/mgedmin/restview/badge.png?branch=master
+.. |coverage| image:: https://coveralls.io/repos/mgedmin/restview/badge.svg?branch=master
 .. _coverage: https://coveralls.io/r/mgedmin/restview

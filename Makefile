@@ -13,13 +13,12 @@ default: all
 
 
 .PHONY: all
-all:
-	@echo "Nothing to do"
+all: bin/restview bin/py.test
 
 
 .PHONY: test
-test:
-	$(PYTHON) setup.py test
+test: bin/py.test bin/restview
+	bin/py.test
 
 .PHONY: check
 check:
@@ -31,7 +30,7 @@ coverage:
 
 .PHONY: dist
 dist:
-	$(PYTHON) setup.py sdist
+	$(PYTHON) setup.py sdist bdist_wheel
 
 .PHONY: distcheck
 distcheck:
@@ -77,7 +76,7 @@ release: releasechecklist
 	# I'm chicken so I won't actually do these things yet
 	@echo "Please run"
 	@echo
-	@echo "  $(PYTHON) setup.py sdist register upload && $(VCS_TAG) `$(PYTHON) setup.py --version`"
+	@echo "  rm -rf dist && $(PYTHON) setup.py sdist bdist_wheel && twine upload dist/* && $(VCS_TAG) `$(PYTHON) setup.py --version`"
 	@echo
 	@echo "Please increment the version number in $(FILE_WITH_VERSION)"
 	@echo "and add a new empty entry at the top of the changelog in $(FILE_WITH_CHANGELOG), then"
@@ -85,3 +84,14 @@ release: releasechecklist
 	@echo '  $(VCS_COMMIT_AND_PUSH)'
 	@echo
 
+bin/py.test: bin/pip
+	bin/pip install pytest mock
+
+bin/restview: bin/pip setup.py
+	bin/pip install -e .
+
+bin/pip: .venv/bin/pip
+	ln -sf .venv/bin bin
+
+.venv/bin/pip:
+	virtualenv -p $(PYTHON) .venv

@@ -75,9 +75,11 @@ DATA_PATH = os.path.dirname(os.path.realpath(__file__))
 
 
 RST_EXTS = [".rst", ".rest"]
+PLAIN_TEXT_EXTS = [".h", ".c", ".hpp", ".cpp", ".cc", ".C", ".py", ".rb",
+        ".uir", ".s", ".S", ".java", ".scala"]
 
-def has_rst_ext(fn):
-    return any(fn.endswith(ext) for ext in RST_EXTS)
+def has_ext(fn, exts):
+    return any(fn.endswith(ext) for ext in exts)
 
 
 class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
@@ -133,8 +135,10 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             return self.handle_image(self.translate_path(), 'image/png')
         elif self.path.endswith('.jpg') or self.path.endswith('.jpeg'):
             return self.handle_image(self.translate_path(), 'image/jpeg')
-        elif self.path.endswith('.txt') or has_rst_ext(self.path):
+        elif self.path.endswith('.txt') or has_ext(self.path, RST_EXTS):
             return self.handle_rest_file(self.translate_path(), watch)
+        elif has_ext(self.path, PLAIN_TEXT_EXTS):
+            return self.handle_image(self.translate_path(), 'text/plain')
         else:
             trpath = self.translate_path()
             for ext in RST_EXTS:
@@ -268,7 +272,7 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
                            if not dn.startswith('.')
                            and not dn.endswith('.egg-info')]
             for fn in filenames:
-                if fn.endswith('.txt') or has_rst_ext(fn):
+                if fn.endswith('.txt') or has_ext(fn, RST_EXTS):
                     prefix = dirpath[len(dirname):]
                     files.append(os.path.join(prefix, fn))
         files.sort(key=str.lower)

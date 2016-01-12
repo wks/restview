@@ -74,6 +74,14 @@ __version__ = '2.6.2.dev0'
 DATA_PATH = os.path.dirname(os.path.realpath(__file__))
 
 
+RST_EXTS = [".rst", ".rest"]
+PLAIN_TEXT_EXTS = [".h", ".c", ".hpp", ".cpp", ".cc", ".C", ".py", ".rb",
+        ".uir", ".s", ".S", ".java", ".scala"]
+
+def has_ext(fn, exts):
+    return any(fn.endswith(ext) for ext in exts)
+
+
 class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     """HTTP request handler that renders ReStructuredText on the fly."""
 
@@ -129,9 +137,16 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             return self.handle_image(self.translate_path(), 'image/jpeg')
         elif self.path.endswith('.svg'):
             return self.handle_image(self.translate_path(), 'image/svg+xml')
-        elif self.path.endswith('.txt') or self.path.endswith('.rst'):
+        elif self.path.endswith('.txt') or has_ext(self.path, RST_EXTS):
             return self.handle_rest_file(self.translate_path(), watch)
+        elif has_ext(self.path, PLAIN_TEXT_EXTS):
+            return self.handle_image(self.translate_path(), 'text/plain')
         else:
+            trpath = self.translate_path()
+            for ext in RST_EXTS:
+                rstpath = trpath + ext
+                if os.path.isfile(rstpath):
+                    return self.handle_rest_file(rstpath)
             self.send_error(501, "File type not supported: %s" % self.path)
 
     def get_latest_mtime(self, filenames, latest_mtime=None):
@@ -259,7 +274,7 @@ class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
                            if not dn.startswith('.')
                            and not dn.endswith('.egg-info')]
             for fn in filenames:
-                if fn.endswith('.txt') or fn.endswith('.rst'):
+                if fn.endswith('.txt') or has_ext(fn, RST_EXTS):
                     prefix = dirpath[len(dirname):]
                     files.append(os.path.join(prefix, fn))
         files.sort(key=str.lower)

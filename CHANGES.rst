@@ -1,10 +1,12 @@
 Changelog
 =========
 
-2.6.2 (unreleased)
+2.7.0 (unreleased)
 ------------------
 
-- Nothing changed yet.
+- New option ``--halt-level`` (`#44
+  <https://github.com/mgedmin/restview/pull/44>`_), contributed by Kunshan
+  Wang.
 
 
 2.6.1 (2016-01-05)
@@ -286,7 +288,7 @@ Changelog
 1.0.1 (2008-07-26)
 ------------------
 
-- New option: --css.  Accepts a filename or a HTTP/HTTPS URL.
+- New option: --css.  Accepts a filename or an HTTP/HTTPS URL.
 
 
 1.0.0 (2008-07-26)

@@ -66,7 +66,7 @@ except NameError:
     unicode = str
 
 
-__version__ = '2.7.0.dev0'
+__version__ = '2.7.1.dev0'
 
 
 # If restview is ever packaged for Debian, this'll likely be changed to
@@ -706,6 +706,9 @@ def main():
                         help='open a web browser [default: only if -l'
                              ' was not specified]',
                         action='store_true', default=None)
+    parser.add_argument('-B', '--no-browser',
+                        help="don't open a web browser",
+                        action='store_false', dest='browser')
     parser.add_argument('-e', '--execute', metavar='COMMAND',
                         help='run a command to produce ReStructuredText',
                         default=None)
